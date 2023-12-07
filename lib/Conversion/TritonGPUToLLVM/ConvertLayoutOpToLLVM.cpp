@@ -21,7 +21,7 @@ using ::mlir::triton::gpu::isaDistributedLayout;
 using ::mlir::triton::gpu::SharedEncodingAttr;
 
 // Forward declarations
-
+static int counter_cvt = 0;
 namespace SharedToDotOperandMMAv1 {
 using CoordTy = SmallVector<Value>;
 using ValueTable = std::map<std::pair<int, int>, std::pair<Value, Value>>;
@@ -153,8 +153,12 @@ private:
     }
     if (auto mmaLayout = layout.dyn_cast<MmaEncodingAttr>()) {
       auto shapePerCTA = getShapePerCTA(mmaLayout, shape);
+      std::cout << "shapePerCTA: " << shapePerCTA[0] << ", " << shapePerCTA[1]
+                << ", " << shapePerCTA[2] << std::endl;
       auto instrShape = mmaLayout.getInstrShape();
-      SmallVector<Value> mmaColIdx(4);
+      std::cout << "instrShape: " << instrShape[0] << ", " << instrShape[1]
+                << ", " << instrShape[2] << std::endl;
+      SmallVector<Value> mmaColIdx(2);
       SmallVector<Value> mmaRowIdx(2);
       Value threadId = getThreadId(rewriter, loc);
       Value warpSize = i32_val(32);
@@ -163,11 +167,15 @@ private:
       // TODO: fix the bug in MMAEncodingAttr document
       SmallVector<Value> multiDimWarpId(2);
       auto warpsPerCTA = mmaLayout.getWarpsPerCTA();
+      std::cout << "warpsPerCTA: " << warpsPerCTA[0] << ", " << warpsPerCTA[1]
+                << ", " << warpsPerCTA[2] << std::endl;
       if (mmaLayout.isHopper()) {
         multiDimWarpId[0] = urem(warpId, i32_val(warpsPerCTA[0]));
         multiDimWarpId[1] = udiv(warpId, i32_val(warpsPerCTA[0]));
       } else {
         auto order = triton::gpu::getOrder(mmaLayout);
+        std::cout << "order: " << order[0] << ", " << order[1] << ", "
+                  << order[2] << std::endl;
         multiDimWarpId = delinearize(rewriter, loc, warpId, warpsPerCTA, order);
       }
       Value _1 = i32_val(1);
@@ -176,22 +184,22 @@ private:
       Value _8 = i32_val(8);
       Value _16 = i32_val(16);
       if (mmaLayout.isAmpere() || mmaLayout.isHopper()) {
-        multiDimWarpId[0] =
-            urem(multiDimWarpId[0],
-                 i32_val(ceil<unsigned>(shapePerCTA[0], instrShape[0])));
         multiDimWarpId[1] =
             urem(multiDimWarpId[1],
                  i32_val(ceil<unsigned>(shapePerCTA[1], instrShape[1])));
+        multiDimWarpId[2] =
+            urem(multiDimWarpId[2],
+                 i32_val(ceil<unsigned>(shapePerCTA[2], instrShape[2])));
 
         Value mmaGrpId = udiv(laneId, _4);
         Value mmaGrpIdP8 = add(mmaGrpId, _8);
         Value mmaThreadIdInGrp = urem(laneId, _4);
         Value mmaThreadIdInGrpM2 = mul(mmaThreadIdInGrp, _2);
         Value mmaThreadIdInGrpM2P1 = add(mmaThreadIdInGrpM2, _1);
-        Value rowWarpOffset = mul(multiDimWarpId[0], i32_val(instrShape[0]));
+        Value rowWarpOffset = mul(multiDimWarpId[1], i32_val(instrShape[1]));
         mmaRowIdx[0] = add(mmaGrpId, rowWarpOffset);
         mmaRowIdx[1] = add(mmaGrpIdP8, rowWarpOffset);
-        Value colWarpOffset = mul(multiDimWarpId[1], i32_val(instrShape[1]));
+        Value colWarpOffset = mul(multiDimWarpId[2], i32_val(instrShape[2]));
         mmaColIdx[0] = add(mmaThreadIdInGrpM2, colWarpOffset);
         mmaColIdx[1] = add(mmaThreadIdInGrpM2P1, colWarpOffset);
       } else if (mmaLayout.isVolta()) {
@@ -200,7 +208,7 @@ private:
         llvm_unreachable("Unexpected MMALayout version");
       }
 
-      assert(rank == 2);
+      // assert(rank == 2);
       SmallVector<Value> multiDimOffset(rank);
       if (mmaLayout.isHopper()) {
         unsigned elemIdRem4 = elemId % 4;
@@ -215,14 +223,15 @@ private:
             add(multiDimOffset[1],
                 i32_val(multiDimCTAInRepId[1] * shapePerCTATile[1]));
       } else if (mmaLayout.isAmpere()) {
-        multiDimOffset[0] = elemId < 2 ? mmaRowIdx[0] : mmaRowIdx[1];
-        multiDimOffset[1] = elemId % 2 == 0 ? mmaColIdx[0] : mmaColIdx[1];
-        multiDimOffset[0] =
-            add(multiDimOffset[0],
-                i32_val(multiDimCTAInRepId[0] * shapePerCTATile[0]));
+        multiDimOffset[0] = multiDimWarpId[0];
+        multiDimOffset[1] = elemId < 2 ? mmaRowIdx[0] : mmaRowIdx[1];
+        multiDimOffset[2] = elemId % 2 == 0 ? mmaColIdx[0] : mmaColIdx[1];
         multiDimOffset[1] =
             add(multiDimOffset[1],
                 i32_val(multiDimCTAInRepId[1] * shapePerCTATile[1]));
+        multiDimOffset[2] =
+            add(multiDimOffset[2],
+                i32_val(multiDimCTAInRepId[2] * shapePerCTATile[2]));
       } else if (mmaLayout.isVolta()) {
         auto [isARow, isBRow, isAVec4, isBVec4, _] =
             mmaLayout.decodeVoltaLayoutStates();
@@ -246,6 +255,9 @@ private:
                            SmallVector<int64_t> shapePerCTA) const {
     unsigned rank = shape.size();
     SmallVector<Value> multiDimOffsetWrapped(rank);
+    assert(shapePerCTATile.size() == rank);
+    assert(shapePerCTA.size() == rank);
+    assert(multiDimOffset.size() == rank);
     for (unsigned d = 0; d < rank; ++d) {
       if (shapePerCTATile[d] > shapePerCTA[d])
         multiDimOffsetWrapped[d] = urem(multiDimOffset[d], i32_val(shape[d]));
@@ -284,9 +296,9 @@ private:
       elemTy = IntegerType::get(elemTy.getContext(), 8);
     else if (isPtr)
       elemTy = IntegerType::get(elemTy.getContext(), 64);
-
+    Value threadId = getThreadId(rewriter, loc);
     auto llvmElemTy = getTypeConverter()->convertType(elemTy);
-
+    std::cout << "accumNumCTAsEachRep: " << accumNumCTAsEachRep << std::endl;
     for (unsigned ctaId = 0; ctaId < accumNumCTAsEachRep; ++ctaId) {
       auto multiDimCTAInRepId =
           getMultiDimIndex<unsigned>(ctaId, numCTAsEachRep, order);
@@ -301,6 +313,7 @@ private:
       // TODO: This is actually redundant index calculation, we should
       //       consider of caching the index calculation result in case
       //       of performance issue observed.
+      std::cout << "accumSizePerThread: " << accumSizePerThread << std::endl;
       for (unsigned elemId = 0; elemId < accumSizePerThread; elemId += vec) {
         SmallVector<Value> multiDimOffset =
             getMultiDimOffset(layout, loc, rewriter, elemId, type,
@@ -310,6 +323,12 @@ private:
             shapePerCTA);
         Value offset = linearize(rewriter, loc, multiDimOffsetWrapped,
                                  paddedRepShape, outOrd);
+        mlir::LLVM::vprintf(
+            "tid: %d, offset: %d, multiDimOffsetWrapped: [%d, %d, %d]",
+            {threadId, offset, multiDimOffsetWrapped[0],
+             multiDimOffsetWrapped[1], multiDimOffsetWrapped[2]},
+            rewriter);
+
         auto elemPtrTy = ptr_ty(llvmElemTy, 3);
         Value ptr = gep(elemPtrTy, smemBase, offset);
         auto vecTy = vec_ty(llvmElemTy, vec);
@@ -317,11 +336,20 @@ private:
         if (stNotRd) {
           Value valVec = undef(vecTy);
           for (unsigned v = 0; v < vec; ++v) {
+            std::cout << "vals.size(): " << vals.size() << std::endl;
+            std::cout << "elemId: " << elemId << std::endl;
+            std::cout << "linearCTAId: " << linearCTAId << std::endl;
+            std::cout << "accumSizePerThread: " << accumSizePerThread
+                      << std::endl;
+            std::cout << "v: " << v << std::endl;
             auto currVal = vals[elemId + linearCTAId * accumSizePerThread + v];
             if (isInt1)
               currVal = zext(llvmElemTy, currVal);
             else if (isPtr)
               currVal = ptrtoint(llvmElemTy, currVal);
+            if (counter_cvt == 0)
+              mlir::LLVM::vprintf("tid: %d, offset: %d, store: %f",
+                                  {threadId, offset, currVal}, rewriter);
             valVec = insert_element(vecTy, valVec, currVal, i32_val(v));
           }
           store(valVec, ptr);
@@ -335,6 +363,9 @@ private:
                                     loc, i8_ty, rewriter.getI8IntegerAttr(0)));
             else if (isPtr)
               currVal = inttoptr(llvmElemTyOrig, currVal);
+            if (counter_cvt == 0)
+              mlir::LLVM::vprintf("tid: %d, offset: %d, load: %f",
+                                  {threadId, offset, currVal}, rewriter);
             vals[elemId + linearCTAId * accumSizePerThread + v] = currVal;
           }
         }
@@ -535,6 +566,7 @@ private:
   lowerDistributedToDistributed(triton::gpu::ConvertLayoutOp op,
                                 OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const {
+    op.dump();
     auto loc = op.getLoc();
     Value src = op.getSrc();
     Value dst = op.getResult();
@@ -577,7 +609,12 @@ private:
       isDstMmaV1 = sliceLayout.getParent().isa<MmaEncodingAttr>() &&
                    sliceLayout.getParent().cast<MmaEncodingAttr>().isVolta();
     }
-
+    std::cout << "srcShapePerCTATile: " << srcShapePerCTATile[0] << " "
+              << srcShapePerCTATile[1] << " " << srcShapePerCTATile[2]
+              << std::endl;
+    std::cout << "dstShapePerCTATile: " << dstShapePerCTATile[0] << " "
+              << dstShapePerCTATile[1] << " " << dstShapePerCTATile[2]
+              << std::endl;
     for (unsigned d = 0; d < rank; ++d) {
       unsigned inPerCTA =
           std::min<unsigned>(shapePerCTA[d], srcShapePerCTATile[d]);
@@ -591,6 +628,11 @@ private:
       inNumCTAs[d] = ceil<unsigned>(shapePerCTA[d], inPerCTA);
       outNumCTAs[d] = ceil<unsigned>(shapePerCTA[d], outPerCTA);
     }
+    std::cout << "inNumCTAsEachRep: " << inNumCTAsEachRep[0] << " "
+              << inNumCTAsEachRep[1] << " " << inNumCTAsEachRep[2] << std::endl;
+    std::cout << "outNumCTAsEachRep: " << outNumCTAsEachRep[0] << " "
+              << outNumCTAsEachRep[1] << " " << outNumCTAsEachRep[2]
+              << std::endl;
     // Potentially we need to store for multiple CTAs in this replication
     auto accumNumReplicates = product<unsigned>(numReplicates);
     auto vals = getTypeConverter()->unpackLLElements(loc, adaptor.getSrc(),
@@ -598,6 +640,8 @@ private:
     unsigned inVec = 0;
     unsigned outVec = 0;
     auto origRepShape = getRepShapeForCvtLayout(op);
+    std::cout << origRepShape[0] << " " << origRepShape[1] << " "
+              << origRepShape[2] << std::endl;
     auto paddedRepShape = getScratchConfigForCvtLayout(op, inVec, outVec);
     if (getElementTypeOrSelf(op.getType())
             .isa<mlir::Float8E4M3B11FNUZType, mlir::Float8E4M3FNType>()) {
@@ -638,10 +682,16 @@ private:
           processReplicaForMMAV1(loc, rewriter, /*stNotRd*/ true, srcTy,
                                  multiDimRepId, inVec, paddedRepShape, outOrd,
                                  vals, smemBase, shape);
-        else
+        else {
+          std::cout << paddedRepShape[0] << " " << paddedRepShape[1] << " "
+                    << paddedRepShape[2] << std::endl;
+          std::cout << outOrd[0] << " " << outOrd[1] << " " << outOrd[2]
+                    << std::endl;
           processReplica(loc, rewriter, /*stNotRd*/ true, srcTy,
                          inNumCTAsEachRep, multiDimRepId, inVec, paddedRepShape,
                          origRepShape, outOrd, vals, smemBase);
+        }
+
       } else {
         llvm::report_fatal_error(
             "ConvertLayout with input layout not implemented");
@@ -672,18 +722,24 @@ private:
           processReplicaForMMAV1(loc, rewriter, /*stNotRd*/ false, dstTy,
                                  multiDimRepId, outVec, paddedRepShape, outOrd,
                                  outVals, smemBase, shape, /*isDestMma=*/true);
-        else
+        else {
+          std::cout << paddedRepShape[0] << " " << paddedRepShape[1] << " "
+                    << paddedRepShape[2] << std::endl;
+          std::cout << outOrd[0] << " " << outOrd[1] << " " << outOrd[2]
+                    << std::endl;
           processReplica(loc, rewriter, /*stNotRd*/ false, dstTy,
                          outNumCTAsEachRep, multiDimRepId, outVec,
                          paddedRepShape, origRepShape, outOrd, outVals,
                          smemBase);
+        }
+
       } else {
         llvm::report_fatal_error(
             "ConvertLayout with output layout not implemented");
         return failure();
       }
     }
-
+    counter_cvt++;
     Value result =
         getTypeConverter()->packLLElements(loc, outVals, rewriter, dstTy);
     rewriter.replaceOp(op, result);
@@ -738,8 +794,8 @@ private:
     auto srcShape = srcTy.getShape();
     auto dstTy = dst.getType().cast<RankedTensorType>();
     auto dstShapePerCTA = triton::gpu::getShapePerCTA(dstTy);
-    assert(srcShape.size() == 2 &&
-           "Unexpected rank of ConvertLayout(blocked->shared)");
+    // assert(srcShape.size() == 2 &&
+    //        "Unexpected rank of ConvertLayout(blocked->shared)");
     auto srcLayout = srcTy.getEncoding();
     auto dstSharedLayout = dstTy.getEncoding().cast<SharedEncodingAttr>();
     auto inOrd = getOrder(srcLayout);

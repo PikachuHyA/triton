@@ -20,7 +20,7 @@ using ::mlir::triton::gpu::getCTALayout;
 using ::mlir::triton::gpu::getShapePerCTA;
 using ::mlir::triton::gpu::getTotalElemsPerThread;
 using ::mlir::triton::gpu::SharedEncodingAttr;
-
+static int counter_ld = 0;
 static CUtensorMapDataType getCUtensorMapDataType(Type ty) {
   if (ty.isF16()) {
     return CUtensorMapDataType::CU_TENSOR_MAP_DATA_TYPE_FLOAT16;
@@ -264,6 +264,9 @@ struct LoadOpConversion
         Value vecIdx = createIndexAttrConstant(
             rewriter, loc, this->getTypeConverter()->getIndexType(), ii % tmp);
         Value loaded = extract_element(valueElemTy, rets[ii / tmp], vecIdx);
+        if (counter_ld == 1)
+          mlir::LLVM::vprintf("tid: %d, loaded: %f",
+                              {getThreadId(rewriter, loc), loaded}, rewriter);
         loadedVals.push_back(loaded);
       }
     } // end vec
@@ -272,6 +275,7 @@ struct LoadOpConversion
     Value resultStruct = getTypeConverter()->packLLElements(
         loc, loadedVals, rewriter, llvmResultStructTy);
     rewriter.replaceOp(op, {resultStruct});
+    counter_ld++;
     return success();
   }
 };

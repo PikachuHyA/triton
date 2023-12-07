@@ -9,6 +9,11 @@ using ::mlir::triton::gpu::MmaEncodingAttr;
 
 using ValueTableV2 = std::map<std::pair<unsigned, unsigned>, Value>;
 
+Value getThreadId(ConversionPatternRewriter &rewriter, Location loc) {
+  Value tid =
+      rewriter.create<::mlir::gpu::ThreadIdOp>(loc, ::mlir::gpu::Dimension::x);
+  return rewriter.create<arith::IndexCastOp>(loc, i32_ty, tid);
+}
 Value loadC(Value tensor, Value llTensor,
             TritonGPUToLLVMTypeConverter *typeConverter, Location loc,
             ConversionPatternRewriter &rewriter) {
@@ -26,6 +31,7 @@ Value loadC(Value tensor, Value llTensor,
          "mma layout.");
 
   auto numMmaRets = tensorTy.getElementType().getIntOrFloatBitWidth() / 8;
+  std::cout << "numMmaRets = " << numMmaRets << std::endl;
   assert(numMmaRets == 4 || numMmaRets == 2);
   if (numMmaRets == 4) {
     return llTensor;
@@ -256,6 +262,8 @@ static void callMmaAmpere(PTXBuilder &builder, unsigned m, unsigned n,
       builder.newListOperand(numMmaRets, isIntMMA || isAccF16 ? "=r" : "=f");
   auto cArgs = builder.newListOperand();
   for (int i = 0; i < numMmaRets; ++i) {
+    std::cout << m << " " << n << " " << i << std::endl;
+    std::cout << colsPerThread << " " << numCPackedElem << std::endl;
     cArgs->listAppend(
         builder.newOperand(fc[(m * colsPerThread + 4 * n) / numCPackedElem + i],
                            std::to_string(i)));
@@ -295,7 +303,11 @@ LogicalResult convertDot(TritonGPUToLLVMTypeConverter *typeConverter,
           bShapePerCTA, bitwidth);
 
   assert(repA[1] == repB[0]);
+  aTensorTy.dump();
+  bTensorTy.dump();
   int repM = repA[0], repN = repB[1], repK = repA[1];
+  std::cout << "repA = " << repA[0] << " " << repA[1] << std::endl;
+  std::cout << "repB = " << repB[0] << " " << repB[1] << std::endl;
 
   // shape / shape_per_cta
   auto ha = getValuesFromDotOperandLayoutStruct(typeConverter, loc, rewriter,
@@ -303,7 +315,9 @@ LogicalResult convertDot(TritonGPUToLLVMTypeConverter *typeConverter,
   auto hb = getValuesFromDotOperandLayoutStruct(typeConverter, loc, rewriter,
                                                 loadedB, std::max(repN / 2, 1),
                                                 repK, bTensorTy);
+  loadedC.dump();
   auto fc = typeConverter->unpackLLElements(loc, loadedC, rewriter, dTensorTy);
+  std::cout << "fc.size() = " << fc.size() << std::endl;
   auto numMmaRets = dTensorTy.getElementType().getIntOrFloatBitWidth() / 8;
   int numCPackedElem = 4 / numMmaRets;
 
@@ -359,10 +373,15 @@ LogicalResult convertDot(TritonGPUToLLVMTypeConverter *typeConverter,
           numCPackedElem > 1
               ? bitcast(extract_element(fc[i], i32_val(j)), resElemTy)
               : bitcast(fc[i], resElemTy);
+      mlir::LLVM::vprintf(
+          "tid: %d, mma-result: %f",
+          {getThreadId(rewriter, loc), results[i * numCPackedElem + j]},
+          rewriter);
     }
   }
   Value res = typeConverter->packLLElements(loc, results, rewriter, structTy);
-
+  res.dump();
+  std::cout << "Ending mma here" << std::endl;
   rewriter.replaceOp(op, res);
 
   return success();
@@ -381,7 +400,8 @@ LogicalResult convertMMA(triton::DotOp op, triton::DotOp::Adaptor adaptor,
   Value A = op.getA();
   Value B = op.getB();
   Value C = op.getC();
-
+  C.dump();
+  std::cout << "---------" << std::endl;
   auto ATensorTy = A.getType().cast<RankedTensorType>();
   auto BTensorTy = B.getType().cast<RankedTensorType>();
 

@@ -66,14 +66,15 @@ warpsPerTileV2(tt::DotOp dotOp, const ArrayRef<int64_t> shape, int numWarps) {
   }
   if (hasChainedDot) {
     if (shape[0] >= shape[1]) {
-      return {(unsigned)numWarps, 1};
+      return {(unsigned)numWarps, 1, 1};
     } else {
       return {1, (unsigned)numWarps};
     }
   }
 
-  SmallVector<unsigned, 2> ret = {1, 1};
-  SmallVector<int64_t, 2> shapePerWarp = {16, 8};
+  // todo: batch-gemm
+  SmallVector<unsigned, 2> ret = {1, 1, 1};
+  SmallVector<int64_t, 2> shapePerWarp = {1, 16, 8};
   // TODO (@daadaada): double-check.
   // original logic in
   // https://github.com/openai/triton/blob/master/lib/codegen/analysis/layout.cc#L252
@@ -105,7 +106,7 @@ warpsPerTileV3(tt::DotOp dotOp, const ArrayRef<int64_t> shape, int numWarps,
 
   // For MMAv3, the smallest indivisible unit of warp shape is (4, 1).
   SmallVector<unsigned, 2> ret = {4, 1};
-  SmallVector<int64_t, 2> shapePerWarp = {16, instrShape[1]};
+  SmallVector<int64_t, 2> shapePerWarp = {1, 16, instrShape[1]};
   do {
     if (ret[0] * ret[1] >= numWarps)
       break;

@@ -235,7 +235,7 @@ SmallVector<unsigned> getSizePerThread(Attribute layout) {
 SmallVector<unsigned> getContigPerThread(Attribute layout) {
   if (auto mmaLayout = layout.dyn_cast<MmaEncodingAttr>()) {
     assert(mmaLayout.isVolta() || mmaLayout.isAmpere() || mmaLayout.isHopper());
-    return {1, 2};
+    return {1, 1, 2};
   } else if (auto sliceLayout = layout.dyn_cast<SliceEncodingAttr>()) {
     auto parentLayout = sliceLayout.getParent();
     return getContigPerThread(parentLayout);
@@ -300,8 +300,8 @@ SmallVector<unsigned> getShapePerCTATile(Attribute layout,
     shape.erase(shape.begin() + sliceLayout.getDim());
   } else if (auto mmaLayout = layout.dyn_cast<MmaEncodingAttr>()) {
     if (mmaLayout.isAmpere())
-      return {16 * mmaLayout.getWarpsPerCTA()[0],
-              8 * mmaLayout.getWarpsPerCTA()[1]};
+      return {mmaLayout.getWarpsPerCTA()[0], 16 * mmaLayout.getWarpsPerCTA()[1],
+              8 * mmaLayout.getWarpsPerCTA()[2]};
     if (mmaLayout.isVolta()) {
       assert(!tensorShape.empty() && "Volta needs the tensorShape");
       if (tensorShape.size() == 1) // must be SliceEncoding
@@ -373,9 +373,9 @@ SmallVector<unsigned> getOrder(Attribute layout) {
     return SmallVector<unsigned>(blockedLayout.getOrder().begin(),
                                  blockedLayout.getOrder().end());
   } else if (auto mmaLayout = layout.dyn_cast<MmaEncodingAttr>()) {
-    return {1, 0};
+    return {2, 1, 0};
   } else if (auto dotLayout = layout.dyn_cast<DotOperandEncodingAttr>()) {
-    return {1, 0};
+    return {2, 1, 0};
   } else if (auto sliceLayout = layout.dyn_cast<SliceEncodingAttr>()) {
     SmallVector<unsigned> parentOrder = getOrder(sliceLayout.getParent());
     unsigned dim = sliceLayout.getDim();
@@ -469,10 +469,10 @@ SmallVector<unsigned> getCTASplitNum(Attribute layout) {
                mmaLayout.getCTALayout().getCTASplitNum().end());
   } else if (auto dotLayout = layout.dyn_cast<DotOperandEncodingAttr>()) {
     res = getCTASplitNum(dotLayout.getParent());
-    assert(res.size() == 2 && "Invalid dotLayout");
+    // assert(res.size() == 2 && "Invalid dotLayout");
 
     // Do not split CTA in K dimension
-    dotLayout.getOpIdx() == 0 ? res[1] = 1 : res[0] = 1;
+    dotLayout.getOpIdx() == 0 ? res[2] = 1 : res[1] = 1;
   } else if (auto sharedLayout = layout.dyn_cast<SharedEncodingAttr>()) {
     res.assign(sharedLayout.getCTALayout().getCTASplitNum().begin(),
                sharedLayout.getCTALayout().getCTASplitNum().end());
@@ -740,7 +740,7 @@ unsigned SliceEncodingAttr::getTotalElemsPerThread(ArrayRef<int64_t> shape,
 SmallVector<unsigned>
 MmaEncodingAttr::getElemsPerThread(ArrayRef<int64_t> shape, Type eltTy) const {
   size_t rank = shape.size();
-  assert(rank == 2 && "Unexpected rank of mma layout");
+  // assert(rank == 2 && "Unexpected rank of mma layout");
   assert((isVolta() || isAmpere() || isHopper()) &&
          "For MmaEncodingAttr only version 1~3 is supported");
 
@@ -764,11 +764,12 @@ MmaEncodingAttr::getElemsPerThread(ArrayRef<int64_t> shape, Type eltTy) const {
     elemsPerThread[1] = resN;
   } else if (isAmpere()) {
     unsigned elemsRow =
-        ceil<unsigned>(shapePerCTA[0], 16 * getWarpsPerCTA()[0]) * 2;
+        ceil<unsigned>(shapePerCTA[1], 16 * getWarpsPerCTA()[1]) * 2;
     unsigned elemsCol =
-        ceil<unsigned>(shapePerCTA[1], 8 * getWarpsPerCTA()[1]) * 2;
-    elemsPerThread[0] = elemsRow;
-    elemsPerThread[1] = elemsCol;
+        ceil<unsigned>(shapePerCTA[2], 8 * getWarpsPerCTA()[2]) * 2;
+    elemsPerThread[0] = 1;
+    elemsPerThread[1] = elemsRow;
+    elemsPerThread[2] = elemsCol;
   } else if (isHopper()) {
     auto wpt = getWarpsPerCTA();
     auto instrMNK = getInstrShape();
@@ -839,13 +840,13 @@ DotOperandEncodingAttr::getMMAv2Rep(ArrayRef<int64_t> shape,
   auto warpsPerCTA = getParent().cast<MmaEncodingAttr>().getWarpsPerCTA();
   assert(mmaParent.isAmpere());
   if (getOpIdx() == 0)
-    return {std::max<int64_t>(1, shape[0] / (shapePerWarp[0] * warpsPerCTA[0])),
-            std::max<int64_t>(1, shape[1] / shapePerWarp[2])};
+    return {std::max<int64_t>(1, shape[1] / (shapePerWarp[0] * warpsPerCTA[1])),
+            std::max<int64_t>(1, shape[2] / shapePerWarp[2])};
   else {
     assert(getOpIdx() == 1);
     return {
-        std::max<int64_t>(1, shape[0] / shapePerWarp[2]),
-        std::max<int64_t>(1, shape[1] / (shapePerWarp[1] * warpsPerCTA[1]))};
+        std::max<int64_t>(1, shape[1] / shapePerWarp[2]),
+        std::max<int64_t>(1, shape[2] / (shapePerWarp[1] * warpsPerCTA[2]))};
   }
 }
 

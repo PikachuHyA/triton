@@ -37,6 +37,16 @@ namespace ttng = ::mlir::triton::nvidia_gpu;
 
 typedef DenseMap<Operation *, triton::MakeTensorPtrOp> TensorPtrMapT;
 
+namespace mlir {
+namespace LLVM {
+
+// Helper function for using printf in LLVM conversion.
+void vprintf(StringRef msg, ValueRange args,
+             ConversionPatternRewriter &rewriter);
+
+} // namespace LLVM
+} // namespace mlir
+static int counter1 = 0;
 // FuncOpConversion/FuncOpConversionBase is borrowed from
 // https://github.com/llvm/llvm-project/blob/fae656b2dd80246c3c6f01e9c77c49560368752c/mlir/lib/Conversion/FuncToLLVM/FuncToLLVM.cpp#L276
 // since it is not exposed on header files in mlir v14
@@ -348,7 +358,7 @@ public:
         swizzlingByteWidth * 8 / resElemTy.getIntOrFloatBitWidth();
     Value numElemsPerSwizzlingRowVal = i32_val(numElemsPerSwizzlingRow);
     unsigned leadingDimOffset;
-    if (outOrder.size() == 2) {
+    if (outOrder.size() >= 2) {
       leadingDimOffset = numElemsPerSwizzlingRow * srcShapePerCTA[outOrder[1]];
     } else {
       leadingDimOffset = numElemsPerSwizzlingRow;
@@ -366,7 +376,7 @@ public:
       auto idx = srcIndices[elemIdx];
       Value idxCol = idx[outOrder[0]]; // contiguous dimension
       Value idxRow, strideRow;
-      if (outOrder.size() == 2) {
+      if (outOrder.size() >= 2) {
         idxRow = idx[outOrder[1]]; // discontiguous dimension
         strideRow = srcStrides[outOrder[1]];
       } else {
@@ -422,11 +432,16 @@ public:
       colOffOrdered = mul(colOffOrdered, i32_val(minVec));
       Value colOff = add(colOffSwizzled, colOffOrdered);
       // compute non-immediate offset
+      offset = mul(idx[outOrder[2]], srcStrides[outOrder[2]]);
+      // mlir::LLVM::vprintf("tid: %d, a: %d, b: %d",
+      //                     {getThreadId(rewriter, loc), idx[outOrder[2]],
+      //                      srcStrides[outOrder[2]]},
+      //                     rewriter);
       offset = add(offset, add(rowOff, mul(colOff, strideCol)));
       Value currPtr = gep(dstPtrTy, dstPtrBase, offset);
       // compute immediate offset
       Value immediateOff;
-      if (outOrder.size() == 2) {
+      if (outOrder.size() >= 2) {
         immediateOff =
             add(mul(i32_val(immedateOffRow), srcStrides[outOrder[1]]),
                 i32_val(immedateOffCol));
@@ -497,8 +512,8 @@ public:
                                 ConversionPatternRewriter &rewriter) const {
     auto srcTy = src.getType().cast<RankedTensorType>();
     auto srcShape = srcTy.getShape();
-    assert(srcShape.size() == 2 &&
-           "Unexpected rank of storeDistributedToShared");
+    // assert(srcShape.size() == 2 &&
+    //        "Unexpected rank of storeDistributedToShared");
     auto dstTy = dst.getType().cast<RankedTensorType>();
     auto srcDistributedLayout = srcTy.getEncoding();
     if (auto mmaLayout = srcDistributedLayout.dyn_cast<MmaEncodingAttr>()) {
@@ -523,24 +538,36 @@ public:
     auto wordTy = vec_ty(elemTy, minVec);
     Value word;
 
-    SmallVector<Value> srcStrides = {dstStrides[0], dstStrides[1]};
-    SmallVector<Value> offsetVals = {i32_val(0), i32_val(0)};
+    SmallVector<Value> srcStrides = {dstStrides[0], dstStrides[1],
+                                     dstStrides[2]};
+    SmallVector<Value> offsetVals = {i32_val(0), i32_val(0), i32_val(0)};
     SharedMemoryObject smemObj(smemBase, srcStrides, offsetVals);
 
     DenseMap<unsigned, Value> sharedPtrs =
         getSwizzledSharedPtrs(loc, inVec, srcTy, dstSharedLayout, dstElemTy,
                               smemObj, rewriter, offsetVals, srcStrides);
+    if (counter1 == 1) {
+      std::cout << "numElems: " << numElems << std::endl;
+      std::cout << "Shared Ptrs: " << sharedPtrs.size() << std::endl;
+      std::cout << "minVec: " << minVec << std::endl;
+    }
 
     for (unsigned i = 0; i < numElems; ++i) {
       if (i % minVec == 0)
         word = undef(wordTy);
       word = insert_element(wordTy, word, inVals[i], i32_val(i % minVec));
+      if (counter1 == 1)
+        mlir::LLVM::vprintf("tid: %d, elem: %f, addr: %d",
+                            {getThreadId(rewriter, loc), inVals[i],
+                             sharedPtrs[i / minVec * minVec]},
+                            rewriter);
       if (i % minVec == minVec - 1) {
         Value smemAddr = sharedPtrs[i / minVec * minVec];
         smemAddr = bitcast(smemAddr, ptr_ty(wordTy, 3));
         store(word, smemAddr);
       }
     }
+    counter1++;
   }
 
   // -----------------------------------------------------------------------
@@ -1032,6 +1059,9 @@ private:
                            RankedTensorType type) const {
     auto shape = type.getShape();
     auto shapePerCTA = getShapePerCTA(mmaLayout, shape);
+    std::cout << shapePerCTA[0] << " " << shapePerCTA[1] << " "
+              << shapePerCTA[2] << std::endl;
+    std::cout << "Zahi" << std::endl;
     SmallVector<SmallVector<unsigned>> ret;
 
     for (unsigned i = 0; i < shapePerCTA[0];
