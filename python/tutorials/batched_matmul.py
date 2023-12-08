@@ -89,8 +89,11 @@ def matmul(q, k):
 # qkv: [4, 16, 64]
 M, N, K = 16, 32, 16
 # torch.manual_seed(0)
-q = torch.eye(M, device='cuda', dtype=torch.float16)
-# k_list = [[j for i in range(N)] for j in range(K)]
+# q = torch.eye(M, device='cuda', dtype=torch.float16)
+# q_list = [[i for i in range(M)] for j in range(K)]
+# q = torch.tensor(q_list, device='cuda', dtype=torch.float16)
+q = torch.randn((16, 16), device='cuda', dtype=torch.float16)
+# k_list = [[1 if (i % 16) == j else 0 for i in range(N)] for j in range(K)]
 # k = torch.tensor(k_list, device='cuda', dtype=torch.float16)
 k = torch.randn((16, 32), device='cuda', dtype=torch.float16)
 

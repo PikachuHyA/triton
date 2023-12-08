@@ -264,7 +264,7 @@ struct LoadOpConversion
         Value vecIdx = createIndexAttrConstant(
             rewriter, loc, this->getTypeConverter()->getIndexType(), ii % tmp);
         Value loaded = extract_element(valueElemTy, rets[ii / tmp], vecIdx);
-        if (counter_ld == 1)
+        if (counter_ld == 0)
           mlir::LLVM::vprintf("tid: %d, loaded: %f",
                               {getThreadId(rewriter, loc), loaded}, rewriter);
         loadedVals.push_back(loaded);

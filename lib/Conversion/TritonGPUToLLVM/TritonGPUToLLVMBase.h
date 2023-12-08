@@ -546,7 +546,7 @@ public:
     DenseMap<unsigned, Value> sharedPtrs =
         getSwizzledSharedPtrs(loc, inVec, srcTy, dstSharedLayout, dstElemTy,
                               smemObj, rewriter, offsetVals, srcStrides);
-    if (counter1 == 1) {
+    if (counter1 == 0) {
       std::cout << "numElems: " << numElems << std::endl;
       std::cout << "Shared Ptrs: " << sharedPtrs.size() << std::endl;
       std::cout << "minVec: " << minVec << std::endl;
@@ -556,7 +556,7 @@ public:
       if (i % minVec == 0)
         word = undef(wordTy);
       word = insert_element(wordTy, word, inVals[i], i32_val(i % minVec));
-      if (counter1 == 1)
+      if (counter1 == 0)
         mlir::LLVM::vprintf("tid: %d, elem: %f, addr: %d",
                             {getThreadId(rewriter, loc), inVals[i],
                              sharedPtrs[i / minVec * minVec]},

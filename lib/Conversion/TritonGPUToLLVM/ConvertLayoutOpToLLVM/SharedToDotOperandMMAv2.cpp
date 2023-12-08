@@ -352,7 +352,7 @@ MMA16816SmemLoader::loadX4(int mat0, int mat1, ArrayRef<Value> ptrs, Type matTy,
     auto f163_2 = extract_element(bitcast(res3, vec_ty(f16_ty, 2)), i32_val(1));
     auto f164_1 = extract_element(bitcast(res4, vec_ty(f16_ty, 2)), i32_val(0));
     auto f164_2 = extract_element(bitcast(res4, vec_ty(f16_ty, 2)), i32_val(1));
-    if (counter == 1)
+    if (counter == 0)
       mlir::LLVM::vprintf(
           "tid: %d, addr: %d, res1: [%f, %f], res2: [%f, %f], res3: "
           "[%f, %f], res4: [%f, %f]\n",
@@ -440,7 +440,7 @@ MMA16816SmemLoader::MMA16816SmemLoader(
   vecWidth = 4 / elemBytes;
 
   // rule: k must be the fast-changing axis.
-  needTrans = kOrder != order[0];
+  needTrans = kOrder != (order[0] - 1);
   canUseLdmatrix = elemBytes == 2 || (!needTrans);
   canUseLdmatrix = canUseLdmatrix && (kWidth == vecWidth);
 
