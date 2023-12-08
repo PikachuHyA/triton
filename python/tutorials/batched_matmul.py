@@ -32,8 +32,8 @@ def matmul_kernel(
     q_ptrs1 = offs_b[:, None, None] * 0 + offs_m[None, :, None] * stride_qm + offs_k[None, None, :] * stride_qk
     q_ptrs = q_ptr + q_ptrs1
     q = tl.load(q_ptrs)
-    k_ptrs = k_ptr + offs_b[:, None, None] * stride_kb + offs_n[None, None, :] * stride_kn + offs_k[None, :,
-                                                                                                    None] * stride_kk
+    k_ptrs = k_ptr + offs_b[:, None, None] * stride_kb + offs_n[None, None, :] * stride_kk + offs_k[None, :,
+                                                                                                    None] * stride_kn
 
     qk = tl.zeros((NUM_WARPS, BLOCK_M, BLOCK_N // NUM_WARPS), dtype=tl.float32)
     k = tl.load(k_ptrs)
@@ -90,9 +90,9 @@ def matmul(q, k):
 M, N, K = 16, 32, 16
 # torch.manual_seed(0)
 q = torch.eye(M, device='cuda', dtype=torch.float16)
-k_list = [[i for i in range(N)] for j in range(K)]
-k = torch.tensor(k_list, device='cuda', dtype=torch.float16)
-# k = torch.randn((32, 16), device='cuda', dtype=torch.float16)
+# k_list = [[j for i in range(N)] for j in range(K)]
+# k = torch.tensor(k_list, device='cuda', dtype=torch.float16)
+k = torch.randn((16, 32), device='cuda', dtype=torch.float16)
 
 triton_output = matmul(q, k)
 torch_output = torch.matmul(q, k)
