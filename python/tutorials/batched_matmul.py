@@ -76,13 +76,14 @@ def matmul(q, k):
         BLOCK_M=BLOCK_M,
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,  #
-        num_warps=2,
+        num_warps=B,
     )
     return o
 
 
-q = torch.randn((2, 16, 16), device='cuda', dtype=torch.float16)
-k = torch.randn((2, 16, 16), device='cuda', dtype=torch.float16)
+B, M, K, N = 4, 16, 16, 16
+q = torch.randn((B, M, K), device='cuda', dtype=torch.float16)
+k = torch.randn((B, K, N), device='cuda', dtype=torch.float16)
 
 triton_output = matmul(q, k)
 torch_output = torch.matmul(q, k)
