@@ -29,7 +29,7 @@ def matmul_kernel(
     offs_k = tl.arange(0, BLOCK_K)
     q_ptrs = q_ptr + offs_b[:, None, None] * stride_qb + offs_m[None, :, None] * stride_qm + offs_k[None,
                                                                                                     None, :] * stride_qk
-    k_ptrs = k_ptr + offs_b[:, None, None] * stride_kb + offs_k[None, :, None] * stride_kk + offs_k[None,
+    k_ptrs = k_ptr + offs_b[:, None, None] * stride_kb + offs_k[None, :, None] * stride_kk + offs_n[None,
                                                                                                     None, :] * stride_kn
 
     q = tl.load(q_ptrs)
@@ -81,7 +81,7 @@ def matmul(q, k):
     return o
 
 
-B, M, K, N = 4, 16, 16, 16
+B, M, K, N = 4, 64, 64, 64
 q = torch.randn((B, M, K), device='cuda', dtype=torch.float16)
 k = torch.randn((B, K, N), device='cuda', dtype=torch.float16)
 

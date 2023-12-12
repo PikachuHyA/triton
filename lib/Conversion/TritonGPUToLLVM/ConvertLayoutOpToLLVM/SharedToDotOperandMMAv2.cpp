@@ -462,8 +462,8 @@ MMA16816SmemLoader::MMA16816SmemLoader(
   int loadOffsetInMat[2];
   loadOffsetInMat[kOrder] =
       2; // instrShape[kOrder] / matShape[kOrder], always 2
-  loadOffsetInMat[kOrder ^ 1] =
-      warpsPerTile * (instrShape[kOrder ^ 1] / matShape[kOrder ^ 1]);
+  loadOffsetInMat[kOrder ^ 1] = warpsPerTile * (instrShape[(kOrder ^ 1) + 1] /
+                                                matShape[(kOrder ^ 1) + 1]);
 
   contiguousLoadMatOffset = loadOffsetInMat[order[0] - 1];
 
