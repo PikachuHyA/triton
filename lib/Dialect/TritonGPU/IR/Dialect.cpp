@@ -767,7 +767,7 @@ MmaEncodingAttr::getElemsPerThread(ArrayRef<int64_t> shape, Type eltTy) const {
         ceil<unsigned>(shapePerCTA[1], 16 * getWarpsPerCTA()[1]) * 2;
     unsigned elemsCol =
         ceil<unsigned>(shapePerCTA[2], 8 * getWarpsPerCTA()[2]) * 2;
-    elemsPerThread[0] = 1;
+    elemsPerThread[0] = ceil<unsigned>(shapePerCTA[0], getWarpsPerCTA()[0]);
     elemsPerThread[1] = elemsRow;
     elemsPerThread[2] = elemsCol;
   } else if (isHopper()) {
