@@ -176,7 +176,7 @@ MMA16816SmemLoader::computeLdmatrixMatOffs(Value warpB, Value warpId,
       contiguousIndex = urem(contiguousIndex, i32_val(contiguousTileNumMats));
     contiguousIndex = add(contiguousIndex, contiguousSliceMatOffset);
     Value contiguousIndexSwizzled = xor_(contiguousIndex, phase);
-    offs[i] = mul(warpB, i32_val(256));
+    offs[i] = mul(warpB, i32_val(tileShape[order[0]] * tileShape[order[1]]));
     offs[i] = add(offs[i],
                   add(mul(contiguousIndexSwizzled, i32_val(contiguousMatShape)),
                       mul(rowOffset, stridedSmemOffset)));
@@ -544,7 +544,7 @@ getLoadMatrixFn(Value tensor, const SharedMemoryObject &smemObj,
     assert(vecPhase == 1 || vecPhase == 4 * kWidth);
 
   int nPerWarp =
-      std::max<int>(shapePerCTA[1] / mmaLayout.getWarpsPerCTA()[1], 8);
+      std::max<int>(shapePerCTA[2] / mmaLayout.getWarpsPerCTA()[2], 8);
 
   // (a, b) is the coordinate.
   auto load = [=, &rewriter, &vals](int a, int b) {
